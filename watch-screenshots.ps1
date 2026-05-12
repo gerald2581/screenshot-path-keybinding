@@ -1,3 +1,11 @@
+# Single-instance via PID file
+$pidFile = "$env:USERPROFILE\.claude\scripts\watcher.pid"
+if (Test-Path $pidFile) {
+    $oldPid = [int](Get-Content $pidFile -ErrorAction SilentlyContinue)
+    if ($oldPid -and (Get-Process -Id $oldPid -ErrorAction SilentlyContinue)) { exit 0 }
+}
+$PID | Set-Content $pidFile
+
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
@@ -32,6 +40,7 @@ public class ScreenshotApp : Form {
         this.WindowState = FormWindowState.Minimized;
         this.ShowInTaskbar = false;
         this.FormBorderStyle = FormBorderStyle.None;
+        this.Size = new System.Drawing.Size(1, 1);
 
         clipTimer = new System.Windows.Forms.Timer();
         clipTimer.Interval = 500;
