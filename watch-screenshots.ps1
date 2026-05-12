@@ -20,25 +20,37 @@ using System.Threading;
 using System.Windows.Forms;
 
 public class ScreenshotApp : Form {
-    [DllImport("user32.dll")] static extern bool RegisterHotKey(IntPtr h, int id, int mod, int vk);
-    [DllImport("user32.dll")] static extern bool UnregisterHotKey(IntPtr h, int id);
+    [DllImport("user32.dll")] static extern IntPtr SetWindowsHookEx(int idHook, LowLevelKeyboardProc fn, IntPtr hMod, uint threadId);
+    [DllImport("user32.dll")] static extern bool UnhookWindowsHookEx(IntPtr hhk);
+    [DllImport("user32.dll")] static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
+    [DllImport("kernel32.dll")] static extern IntPtr GetModuleHandle(string name);
+    [DllImport("user32.dll")] static extern short GetAsyncKeyState(int vKey);
     [DllImport("user32.dll")] static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
 
-    const int WM_HOTKEY = 0x0312;
-    const int MOD_SHIFT = 0x0004;
-    const int VK_INSERT = 0x2D;
-    const uint KEYUP = 0x0002;
+    delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct KBDLLHOOKSTRUCT { public uint vkCode, scanCode, flags, time; public IntPtr dwExtraInfo; }
+
+    const int WH_KEYBOARD_LL = 13;
+    const int WM_KEYDOWN     = 0x0100;
+    const int VK_SHIFT       = 0x10;
+    const int VK_INSERT      = 0x2D;
+    const uint KEYUP         = 0x0002;
 
     readonly string pathFile;
     readonly string saveDir;
-    string lastHash = null;
+    string lastHash    = null;
+    bool skipNext      = false;
+    IntPtr hookId      = IntPtr.Zero;
+    LowLevelKeyboardProc hookProc;
     System.Windows.Forms.Timer clipTimer;
 
     public ScreenshotApp(string pathFile, string saveDir) {
         this.pathFile = pathFile;
-        this.saveDir = saveDir;
-        this.WindowState = FormWindowState.Minimized;
-        this.ShowInTaskbar = false;
+        this.saveDir  = saveDir;
+        this.WindowState    = FormWindowState.Minimized;
+        this.ShowInTaskbar  = false;
         this.FormBorderStyle = FormBorderStyle.None;
         this.Size = new System.Drawing.Size(1, 1);
 
@@ -48,14 +60,42 @@ public class ScreenshotApp : Form {
         clipTimer.Start();
     }
 
+    IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam) {
+        if (nCode >= 0 && wParam == (IntPtr)WM_KEYDOWN) {
+            var s = (KBDLLHOOKSTRUCT)Marshal.PtrToStructure(lParam, typeof(KBDLLHOOKSTRUCT));
+            bool isShiftInsert = s.vkCode == VK_INSERT && (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
+
+            if (isShiftInsert) {
+                if (skipNext) { skipNext = false; return CallNextHookEx(hookId, nCode, wParam, lParam); }
+
+                if (Clipboard.ContainsImage()) {
+                    try {
+                        string path = File.ReadAllText(pathFile).Trim();
+                        if (!string.IsNullOrEmpty(path)) {
+                            Clipboard.SetText(path);
+                            Thread.Sleep(50);
+                            skipNext = true;
+                            keybd_event(VK_SHIFT, 0, 0, UIntPtr.Zero);
+                            keybd_event(VK_INSERT, 0, 0, UIntPtr.Zero);
+                            keybd_event(VK_INSERT, 0, KEYUP, UIntPtr.Zero);
+                            keybd_event(VK_SHIFT, 0, KEYUP, UIntPtr.Zero);
+                        }
+                    } catch {}
+                    return new IntPtr(1); // suppress original
+                }
+                // teks/lainnya: pass through ke mintty
+            }
+        }
+        return CallNextHookEx(hookId, nCode, wParam, lParam);
+    }
+
     void CheckClipboard(object s, EventArgs e) {
         try {
             Image img = Clipboard.GetImage();
             if (img == null) return;
             using (var ms = new MemoryStream()) {
                 img.Save(ms, ImageFormat.Png);
-                byte[] bytes = ms.ToArray();
-                string hash = BitConverter.ToString(MD5.Create().ComputeHash(bytes));
+                string hash = BitConverter.ToString(MD5.Create().ComputeHash(ms.ToArray()));
                 if (hash == lastHash) { img.Dispose(); return; }
                 lastHash = hash;
                 string ts = DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss");
@@ -70,40 +110,13 @@ public class ScreenshotApp : Form {
     protected override void OnLoad(EventArgs e) {
         base.OnLoad(e);
         this.Visible = false;
-        RegisterHotKey(this.Handle, 1, MOD_SHIFT, VK_INSERT);
-    }
-
-    protected override void WndProc(ref Message m) {
-        if (m.Msg == WM_HOTKEY && m.WParam.ToInt32() == 1) {
-            try {
-                if (Clipboard.ContainsImage()) {
-                    string path = File.ReadAllText(pathFile).Trim();
-                    if (!string.IsNullOrEmpty(path)) {
-                        Clipboard.SetText(path);
-                        Thread.Sleep(100);
-                        keybd_event(0x11, 0, 0, UIntPtr.Zero);
-                        keybd_event(0x56, 0, 0, UIntPtr.Zero);
-                        keybd_event(0x56, 0, KEYUP, UIntPtr.Zero);
-                        keybd_event(0x11, 0, KEYUP, UIntPtr.Zero);
-                    }
-                } else {
-                    UnregisterHotKey(this.Handle, 1);
-                    Thread.Sleep(50);
-                    keybd_event(0x10, 0, 0, UIntPtr.Zero);
-                    keybd_event(0x2D, 0, 0, UIntPtr.Zero);
-                    keybd_event(0x2D, 0, KEYUP, UIntPtr.Zero);
-                    keybd_event(0x10, 0, KEYUP, UIntPtr.Zero);
-                    Thread.Sleep(50);
-                    RegisterHotKey(this.Handle, 1, MOD_SHIFT, VK_INSERT);
-                }
-            } catch {}
-        }
-        base.WndProc(ref m);
+        hookProc = HookCallback;
+        hookId = SetWindowsHookEx(WH_KEYBOARD_LL, hookProc, GetModuleHandle(null), 0);
     }
 
     protected override void OnFormClosing(FormClosingEventArgs e) {
         clipTimer.Stop();
-        UnregisterHotKey(this.Handle, 1);
+        if (hookId != IntPtr.Zero) UnhookWindowsHookEx(hookId);
         base.OnFormClosing(e);
     }
 
