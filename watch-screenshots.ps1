@@ -76,10 +76,17 @@ public class ScreenshotApp : Form {
     protected override void WndProc(ref Message m) {
         if (m.Msg == WM_HOTKEY && m.WParam.ToInt32() == 1) {
             try {
-                string path = File.ReadAllText(pathFile).Trim();
-                if (!string.IsNullOrEmpty(path)) {
-                    Clipboard.SetText(path);
-                    Thread.Sleep(100);
+                if (Clipboard.ContainsImage()) {
+                    string path = File.ReadAllText(pathFile).Trim();
+                    if (!string.IsNullOrEmpty(path)) {
+                        Clipboard.SetText(path);
+                        Thread.Sleep(100);
+                        keybd_event(0x11, 0, 0, UIntPtr.Zero);
+                        keybd_event(0x56, 0, 0, UIntPtr.Zero);
+                        keybd_event(0x56, 0, KEYUP, UIntPtr.Zero);
+                        keybd_event(0x11, 0, KEYUP, UIntPtr.Zero);
+                    }
+                } else {
                     keybd_event(0x11, 0, 0, UIntPtr.Zero);
                     keybd_event(0x56, 0, 0, UIntPtr.Zero);
                     keybd_event(0x56, 0, KEYUP, UIntPtr.Zero);
