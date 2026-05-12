@@ -87,10 +87,14 @@ public class ScreenshotApp : Form {
                         keybd_event(0x11, 0, KEYUP, UIntPtr.Zero);
                     }
                 } else {
-                    keybd_event(0x11, 0, 0, UIntPtr.Zero);
-                    keybd_event(0x56, 0, 0, UIntPtr.Zero);
-                    keybd_event(0x56, 0, KEYUP, UIntPtr.Zero);
-                    keybd_event(0x11, 0, KEYUP, UIntPtr.Zero);
+                    UnregisterHotKey(this.Handle, 1);
+                    Thread.Sleep(50);
+                    keybd_event(0x10, 0, 0, UIntPtr.Zero);
+                    keybd_event(0x2D, 0, 0, UIntPtr.Zero);
+                    keybd_event(0x2D, 0, KEYUP, UIntPtr.Zero);
+                    keybd_event(0x10, 0, KEYUP, UIntPtr.Zero);
+                    Thread.Sleep(50);
+                    RegisterHotKey(this.Handle, 1, MOD_SHIFT, VK_INSERT);
                 }
             } catch {}
         }
